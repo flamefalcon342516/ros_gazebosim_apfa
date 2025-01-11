@@ -1,0 +1,184 @@
+<?xml version="1.0"?>
+<robot name="differential_drive_robot" xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+<xacro:property name="body_link_x_dim" value="1"/>
+<xacro:property name="body_link_y_dim" value="0.6"/>
+<xacro:property name="body_link_z_dim" value="0.3"/>
+
+<xacro:property name="wheel_link_radius" value="0.15"/>
+<xacro:property name="wheel_link_length" value="0.1"/>
+<xacro:property name="wheel_link_z_location" value="-0.1"/>
+
+<xacro:property name="body_density" value="3500.0"/>
+<xacro:property name="wheel_density" value="3500.0"/>
+
+<xacro:property name="pi_const" value="3.14159265"/>
+
+<xacro:property name="body_mass" value="${body_density*body_link_x_dim*body_link_y_dim*body_link_z_dim}"/>
+<xacro:property name="wheel_mass" value="${wheel_density*pi_const*wheel_link_radius*wheel_link_radius*wheel_link_length}"/>
+
+<xacro:property name="Iz_wheel" value="${0.5*wheel_mass*wheel_link_radius*wheel_link_radius}" />
+<xacro:property name="I_wheel" value="${(1.0/12.0)*wheel_mass*(3.0*wheel_link_radius*wheel_link_radius+wheel_link_length*wheel_link_length)}" />
+
+<joint name="camera_joint" type="fixed">
+    <parent link="body_link"/>
+    <child link="camera_link"/>
+    <origin xyz="0 0 0.7" rpy="0 0 0"/>
+</joint>
+
+<link name="camera_link">
+    <visual>
+        <geometry>
+            <box size="0.010 0.03 0.03"/>
+        </geometry>
+    </visual>
+</link>
+
+<joint name="camera_optical_joint" type="fixed">
+    <parent link="camera_link"/>
+    <child link="camera_link_optical"/>
+    <origin xyz="0 0 0" rpy="-1.57 0 -1.57"/>
+</joint>
+
+<link name="camera_link_optical"></link>
+
+<xacro:macro name="inertia_wheel">
+    <inertial>
+    <origin rpy="0 0 0" xyz="0 0 0"/>
+    <mass value="${wheel_mass}"/>
+    <inertia ixx="${I_wheel}" ixy="0.0" ixz="0.0" iyy="${I_wheel}" iyz="0.0" izz="${Iz_wheel}" />
+    </inertial>
+</xacro:macro>
+
+<xacro:include filename="$(find mobile_robot)/model/robot.gazebo" />
+
+<link name="dummy" />
+<joint name="dummy_joint" type="fixed">
+    <parent link="dummy"/>
+    <child link="body_link"/>
+</joint>
+
+<link name="body_link">
+    <visual>
+        <geometry>
+            <box size="${body_link_x_dim} ${body_link_y_dim} ${body_link_z_dim}" />
+        </geometry>
+        <origin rpy="0 0 0" xyz="0 0 0"/>
+    </visual>
+    <collision>
+        <geometry>
+            <box size="1.0 0.6 0.3" />
+        </geometry>
+        <origin rpy="0 0 0" xyz="0 0 0"/>
+    </collision>
+    <inertial>
+        <origin rpy="0 0 0" xyz="0 0 0"/>
+        <mass value="${body_mass}"/>
+        <inertia ixx="${(1.0/12.0)*body_mass*(body_link_y_dim*body_link_y_dim+body_link_z_dim*body_link_z_dim)}"
+                ixy="0.0" ixz="0.0" iyz="0.0"
+                iyy="${(1.0/12.0)*body_mass*(body_link_x_dim*body_link_x_dim+body_link_z_dim*body_link_z_dim)}"
+                izz="${(1.0/12.0)*body_mass*(body_link_y_dim*body_link_y_dim+body_link_x_dim*body_link_x_dim)}"/>
+    </inertial>
+</link>
+
+<joint name="wheel1_joint" type="continuous" >
+    <parent link="body_link"/>
+    <child link="wheel1_link"/>
+    <origin xyz="-0.2 -0.35 -0.15" rpy="0 0 0" />
+    <axis xyz="0 1 0"/>
+    <limit effort="1000" velocity="1000"/>
+    <dynamics damping="1.0" friction="2.0"/>
+</joint>
+
+<link name="wheel1_link">
+    <visual>
+        <origin rpy="1.570795 0 0" xyz="0 0 0"/>
+        <geometry>
+            <cylinder length="0.1" radius="0.15"/>
+        </geometry>
+    </visual>
+    <collision>
+        <origin rpy="1.570795 0 0" xyz="0 0 0"/>
+        <geometry>
+            <cylinder length="${wheel_link_length}" radius="${wheel_link_radius}"/>
+        </geometry>
+    </collision>
+<xacro:inertia_wheel />
+</link>
+
+<joint name="wheel2_joint" type="continuous" >
+    <parent link="body_link"/>
+    <child link="wheel2_link"/>
+    <origin xyz="-0.2 0.35 -0.15" rpy="0 0 0" />
+    <axis xyz="0 1 0"/>
+    <limit effort="1000" velocity="1000"/>
+    <dynamics damping="1.0" friction="2.0"/>
+</joint>
+
+<link name="wheel2_link">
+    <visual>
+        <origin rpy="1.570795 0 0" xyz="0 0 0"/>
+        <geometry>
+            <cylinder length="${wheel_link_length}" radius="${wheel_link_radius}"/>
+        </geometry>
+    </visual>
+    <collision>
+        <origin rpy="1.570795 0 0" xyz="0 0 0"/>
+        <geometry>
+            <cylinder length="${wheel_link_length}" radius="${wheel_link_radius}"/>
+        </geometry>
+    </collision>
+<xacro:inertia_wheel />
+</link>
+
+<joint name="wheel3_joint" type="continuous" >
+    <parent link="body_link"/>
+    <child link="wheel3_link"/>
+    <origin xyz="0.3 -0.35 -0.15" rpy="0 0 0" />
+    <axis xyz="0 1 0"/>
+    <limit effort="1000" velocity="1000"/>
+    <dynamics damping="1.0" friction="2.0"/>
+</joint>
+
+<link name="wheel3_link">
+    <visual>
+        <origin rpy="1.570795 0 0" xyz="0 0 0"/>
+        <geometry>
+            <cylinder length="${wheel_link_length}" radius="${wheel_link_radius}"/>
+        </geometry>
+    </visual>
+    <collision>
+        <origin rpy="1.570795 0 0" xyz="0 0 0"/>
+        <geometry>
+            <cylinder length="${wheel_link_length}" radius="${wheel_link_radius}"/>
+        </geometry>
+    </collision>
+<xacro:inertia_wheel />
+</link>
+
+<joint name="wheel4_joint" type="continuous" >
+    <parent link="body_link"/>
+    <child link="wheel4_link"/>
+    <origin xyz="0.3 0.35 -0.15" rpy="0 0 0" />
+    <axis xyz="0 1 0"/>
+    <limit effort="1000" velocity="1000"/>
+    <dynamics damping="1.0" friction="2.0"/>
+</joint>
+
+<link name="wheel4_link">
+    <visual>
+        <origin rpy="1.570795 0 0" xyz="0 0 0"/>
+        <geometry>
+            <cylinder length="${wheel_link_length}" radius="${wheel_link_radius}"/>
+        </geometry>
+    </visual>
+    <collision>
+        <origin rpy="1.570795 0 0" xyz="0 0 0"/>
+        <geometry>
+            <cylinder length="${wheel_link_length}" radius="${wheel_link_radius}"/>
+        </geometry>
+    </collision>
+<xacro:inertia_wheel />
+</link>
+
+</robot>
