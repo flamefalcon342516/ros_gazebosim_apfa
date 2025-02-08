@@ -5,6 +5,7 @@ from geometry_msgs.msg import Twist, Point ,Vector3
 from sensor_msgs.msg import PointCloud2, PointField
 from nav_msgs.msg import Odometry
 import sensor_msgs_py.point_cloud2 as pc2
+from sklearn.cluster import DBSCAN
 import numpy as np
 from visualization_msgs.msg import MarkerArray, Marker
 from math import isfinite
@@ -15,7 +16,7 @@ class APFObstacleAvoidance(Node):
     def __init__(self):
         super().__init__('Realsense_data')
         
-        self.cmd_vel_pub = self.create_publisher(Twist, '/cmd_vel', 10)
+        self.cmd_vel_pub = self.create_publisher(Twist, '/mavros/setpoint_velocity/cmd_vel', 20)
         self.pointcloud_sub = self.create_subscription(
             PointCloud2,
             '/camera/camera/depth/color/points',
@@ -26,24 +27,27 @@ class APFObstacleAvoidance(Node):
             '/odom',
             self.odom_callback,
             10)
-        self.publisher = self.create_publisher(PointCloud2, '/filtered_obstacles', 10)    
-        self.target_point = Point(x=14.5, y=15.0, z=0.0)
+        self.publisher = self.create_publisher(PointCloud2, '/filtered_obstacles', 20)   
+        self.marker_pub = self.create_publisher(MarkerArray, "/obstacle_markers", 20) 
+        self.target_point = Point(x=13.0, y=13.0, z=0.0)
         self.robot_position = Point(x=0.0, y=0.0, z=0.0)
         self.robot_orientation = 0.0
         self.closest_obstacles = []   
+        self.position = []
+        self.global_map_points = []
         self.obstacle_detected = False    
-        self.k_attractive = 2.0
-        self.k_repulsive = 10.0
-        self.detection_distance = 1.0
-        self.influence_radius = 1.0
-        self.min_obstacle_dist = 0.5
+        self.k_attractive = 3.0
+        self.k_repulsive = 20.0
+        self.detection_distance = 1.7
+        self.influence_radius = 1.7
+        self.min_obstacle_dist = 0.2
         self.turn_direction = 1
         self.create_timer(0.05, self.control_loop)
 
     def filter_points_by_radius(self, points):
         return [
             point for point in points 
-            if 0.3 < point[2] < 2.0 or np.linalg.norm([point[0],point[2]]) < self.influence_radius
+            if 0.3 < point[2] < 2.0 and np.linalg.norm([point[0],point[1]]) < self.influence_radius
         ]
 
     def pointcloud_callback(self, msg):
@@ -54,29 +58,78 @@ class APFObstacleAvoidance(Node):
             for point in pc2.read_points(msg, field_names=("x", "y", "z"), skip_nans=True)
         ])
 
-        if points.shape[0] > 1000:
-            indices = np.random.choice(points.shape[0], size=1000, replace=False)
+        if points.shape[0] > 2000:
+            indices = np.random.choice(points.shape[0], size=2000, replace=False)
             points = points[indices]
         filtered_points = self.filter_points_by_radius(points)
 
+        clustering = DBSCAN(eps=4.0, min_samples=50).fit(filtered_points)
+        labels = clustering.labels_
+        obstacle_points = np.array([filtered_points[i] for i in range(len(filtered_points)) if labels[i] != -1])
+
+        # self.global_map_points.extend(filtered_points)
+        # self.global_map_points = list(set(tuple(p) for p in self.global_map_points)) 
+
         header = msg.header
-        header.frame_id = "map"
+        header.frame_id = "camera_link"
         pointcloud_msg = pc2.create_cloud_xyz32(header, filtered_points)
         self.publisher.publish(pointcloud_msg)
         
+        marker_array = MarkerArray()
+        marker_id = 0
+
         for point in filtered_points:
-            n_pointx, n_pointy, n_pointz = point
-            # print(f"x:{n_pointx},y:{n_pointy},z:{n_pointz}")
+            n_pointx, n_pointy, n_pointz = float(point[0]), float(point[1]), float(point[2])
             distance = np.sqrt(n_pointx**2 + n_pointy**2 + n_pointz**2)
-            # print(distance)
-            if n_pointz> 0.2:
+
+            if n_pointz > 0.2:
                 if distance < self.influence_radius and distance > 0.5:
                     self.closest_obstacles.append((n_pointx, n_pointy))
-                    # print("obs_values")
-                if distance < self.detection_distance and distance >0.5:
-                    # print("detected.!!!")
+
+                if distance < self.detection_distance and distance > 0.5:
                     self.obstacle_detected = True
                     self.turn_direction = -1 if n_pointy > 0 else 1
+
+                    # Create bounding box marker
+                    marker = Marker()
+                    marker.header.frame_id = "camera_link"
+                    marker.header.stamp = self.get_clock().now().to_msg()
+                    marker.ns = "obstacle_boxes"
+                    marker.id = marker_id
+                    marker.type = Marker.CUBE
+                    marker.action = Marker.ADD
+
+                    min_x, min_y, min_z = np.min(obstacle_points, axis=0)
+                    max_x, max_y, max_z = np.max(obstacle_points, axis=0)
+
+                    # Compute center of bounding box
+                    center_x = (min_x + max_x) / 2
+                    center_y = (min_y + max_y -1.0) / 2
+                    center_z = (min_z + max_z) / 2
+
+                    # Compute size of bounding box
+                    size_x = max_x - min_x
+                    size_y = max_y - min_y 
+                    size_z = max_z - min_z
+
+                    marker.pose.position.x = float(center_x)
+                    marker.pose.position.y = float(center_y)
+                    marker.pose.position.z = float(center_z)
+
+                    marker.scale.x = float(size_x)
+                    marker.scale.y = float(size_y)
+                    marker.scale.z = float(size_z)
+
+                    marker.color.a = 0.4  # Semi-transparent
+                    marker.color.r = 0.0
+                    marker.color.g = 1.0  # Green
+                    marker.color.b = 0.0
+
+                    marker.lifetime = rclpy.duration.Duration(seconds=0.5).to_msg()
+                    marker_array.markers.append(marker)
+                    marker_id += 1
+
+        self.marker_pub.publish(marker_array)
 
     def odom_callback(self, msg):
         self.robot_position = msg.pose.pose.position
@@ -115,69 +168,69 @@ class APFObstacleAvoidance(Node):
                 magnitude = self.k_repulsive
                 f_rep_x += (magnitude * dx / distance)
                 f_rep_y += (magnitude * dy / distance)
-                print(f"obx:{obs[0]},oby:{obs[1]}")
+                # print(f"obx:{obs[0]},oby:{obs[1]}")
                 # print(f"mag:{magnitude}")
                 # print(f"f_r_x:{f_rep_x}, f_r_y:{f_rep_y}")
-                # print(f`"frx:{f_rep_x},fax:{f_att_x},fry:{f_rep_y},fay:{f_att_y}")     
+                # print(f"frx:{f_rep_x},fax:{f_att_x},fry:{f_rep_y},fay:{f_att_y}")     
         return f_att_x - f_rep_x, f_att_y - f_rep_y
 
     def control_loop(self):
-        # cmd_vel = Twist()      
+        cmd_vel = Twist()      
         if self.obstacle_detected:
             for obs in self.closest_obstacles:
                 dx = obs[0]
                 dy = obs[1]
                 print(f"obsx:{obs[0]}, obsy:{obs[1]}")
-            # self.position = []
-            # cmd_vel.linear = Vector3(x = 0.0, y= 0.0, z=0.0)
+            self.position = []
+            cmd_vel.linear = Vector3(x = 0.0, y= 0.0, z=0.0)
             # cmd_vel.angular = Vector3(x = 0.0, y= 0.0, z=0.0)
             # self.cmd_vel_pub.publish(cmd_vel)
             print("reacting to obstacles")
-            # print(self.robot_position)
-            # force_x, force_y = self.calculate_potential_forces()
-            # # print(f"f_x:{force_x},f_y:{force_y}")
-            # total_force = sqrt(force_x**2 + force_y**2)
-            # print(f"total_forces:{total_force}")
-            # curr_ori = self.robot_orientation
-            # # print(f"cur_or:{curr_ori}")
-            # if total_force > 0 and total_force < 80000:
-            #     # print("hi_prior_last")
-            #     desired_angle = atan2(force_y, force_x)
-            #     # print(f"desired:{desired_angle}")
-            #     angular_error = desired_angle - self.robot_orientation
-            #     # print(angular_error)
-            #     # self.position.append((self.robot_position))
-            #     while angular_error > 3.14: angular_error -= 6.28
-            #     while angular_error < -3.14: angular_error += 6.28    
-            #     # print(angular_error)          
-            #     if abs(angular_error) > 0.2:
-            #         cmd_vel.linear.x = 0.2
-            #         cmd_vel.angular.z = 0.3 * angular_error 
-            #         # * angular_error
-            #         # print("turning to avoid obstacle.")
-            #     else:
-            #         cmd_vel.linear.x = 0.3         
+            print(self.robot_position)
+            force_x, force_y = self.calculate_potential_forces()
+            # print(f"f_x:{force_x},f_y:{force_y}")
+            total_force = sqrt(force_x**2 + force_y**2)
+            print(f"total_forces:{total_force}")
+            curr_ori = self.robot_orientation
+            # print(f"cur_or:{curr_ori}")
+            if total_force > 0:
+                # print("hi_prior_last")
+                desired_angle = atan2(force_y, force_x)
+                # print(f"desired:{desired_angle}")
+                angular_error = desired_angle - self.robot_orientation
+                # print(angular_error)
+                self.position.append((self.robot_position))
+                while angular_error > 3.14: angular_error -= 6.28
+                while angular_error < -3.14: angular_error += 6.28    
+                # print(angular_error)          
+                if abs(angular_error) > 0.2:
+                    cmd_vel.linear.x = 0.1
+                    cmd_vel.angular.z = 0.2 * angular_error 
+                    # * angular_error
+                    # print("turning to avoid obstacle.")
+                else:
+                    cmd_vel.linear.x = 0.3       
         else:
-            # dx = self.target_point.x - self.robot_position.x
-            # dy = self.target_point.y - self.robot_position.y
-            # target_heading = atan2(dy, dx)
+            dx = self.target_point.x - self.robot_position.x
+            dy = self.target_point.y - self.robot_position.y
+            target_heading = atan2(dy, dx)
             print("no obstacles.!!")
-        #     distance_to_target = sqrt(dx**2 + dy**2)           
-        #     if distance_to_target < 0.2:
-        #         cmd_vel.linear.x = 0.0
-        #         cmd_vel.angular.z = 0.0
-        #         print("done i'm stopping.!!")
-        #         self.cmd_vel_pub.publish(cmd_vel)
-        #         return
-        #     else:
-        #         cmd_vel.linear.x = 0.3
-        #         # print("peace.!!")
-        #         angular_error = target_heading - self.robot_orientation
-        #         # print(f"ang:{angular_error}")
-        #         while angular_error > 3.14: angular_error -= 6.28
-        #         while angular_error < -3.14: angular_error += 6.28
-        #         cmd_vel.angular.z = 0.2 * angular_error   
-        # self.cmd_vel_pub.publish(cmd_vel)
+            distance_to_target = sqrt(dx**2 + dy**2)           
+            if distance_to_target < 0.2:
+                cmd_vel.linear.x = 0.0
+                cmd_vel.angular.z = 0.0
+                print("done i'm stopping.!!")
+                self.cmd_vel_pub.publish(cmd_vel)
+                return
+            else:
+                cmd_vel.linear.x = 0.3
+                # print("peace.!!")
+                angular_error = target_heading - self.robot_orientation
+                # print(f"ang:{angular_error}")
+                while angular_error > 3.14: angular_error -= 6.28
+                while angular_error < -3.14: angular_error += 6.28
+                cmd_vel.angular.z = 0.1 * angular_error   
+        self.cmd_vel_pub.publish(cmd_vel)
 
 # ros2 launch realsense2_camera rs_launch.py
 # ros2 launch realsense2_camera rs_launch.py depth_module.depth_profile:=1280x720x30 pointcloud.enable:=true
